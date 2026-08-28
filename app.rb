@@ -10,7 +10,7 @@ DB = Sequel.connect(ENV.fetch("DATABASE_URL", "postgres://postgres:postgres@127.
 
 LANGUAGE = "Ruby"
 LANGUAGE_VERSION = RUBY_VERSION
-API_VERSION = "0.1.0"
+API_VERSION = "0.2.0"
 FRAMEWORK = "Sinatra"
 CREATED_YEAR = 2026
 SCHEMA_VERSION = 1
@@ -21,8 +21,10 @@ ENDPOINTS = [
   { "method" => "GET", "path" => "/v1/years", "query" => [] },
   { "method" => "GET", "path" => "/v1/speakers", "query" => ["year"] },
   { "method" => "GET", "path" => "/v1/speakers/:slug", "query" => [] },
+  { "method" => "GET", "path" => "/v1/speakers/:year/:slug", "query" => [] },
   { "method" => "GET", "path" => "/v1/sponsors", "query" => ["year"] },
-  { "method" => "GET", "path" => "/v1/sponsors/:slug", "query" => [] }
+  { "method" => "GET", "path" => "/v1/sponsors/:slug", "query" => [] },
+  { "method" => "GET", "path" => "/v1/sponsors/:year/:slug", "query" => [] }
 ].freeze
 
 set :bind, "0.0.0.0"
@@ -56,13 +58,32 @@ get "/v1/years" do
 end
 
 get "/v1/speakers" do
-  dataset = DB[:v1_speakers]
   if params["year"]
     year = Integer(params["year"])
-    slugs = DB[:v1_talks].where(year: year).select_map(:speaker_slug)
-    dataset = dataset.where(slug: slugs)
+    rows = year_speakers(year)
+    JSON.generate(data: rows)
+  else
+    dataset = DB[:v1_speakers].order(:last_name, :first_name)
+    JSON.generate(data: dataset.all.map { |r| stringify_keys(r) })
   end
-  JSON.generate(data: dataset.order(:last_name, :first_name).all.map { |r| stringify_keys(r) })
+end
+
+get %r{/v1/speakers/(\d{4})/([^/]+)} do |year, slug|
+  year = Integer(year)
+  speaker = DB[:v1_speakers].where(slug: slug).first
+  halt 404, JSON.generate(error: "not_found") unless speaker
+
+  talks = DB[:v1_talks].where(speaker_slug: slug, year: year).all
+  halt 404, JSON.generate(error: "not_found") if talks.empty?
+
+  years = DB[:v1_talks].where(speaker_slug: slug).select_map(:year).uniq.sort.reverse
+  payload = stringify_keys(speaker).merge(
+    "year" => year,
+    "years" => years,
+    "other_years" => years.reject { |y| y == year },
+    "talks" => talks.map { |t| stringify_keys(t) }
+  )
+  JSON.generate(data: payload)
 end
 
 get "/v1/speakers/:slug" do
@@ -70,18 +91,37 @@ get "/v1/speakers/:slug" do
   halt 404, JSON.generate(error: "not_found") unless speaker
 
   talks = DB[:v1_talks].where(speaker_slug: params["slug"]).all
-  payload = stringify_keys(speaker).merge("talks" => talks.map { |t| stringify_keys(t) })
+  years = talks.map { |t| t[:year] || t["year"] }.uniq.sort.reverse
+  payload = stringify_keys(speaker).merge(
+    "years" => years,
+    "talks" => talks.map { |t| stringify_keys(t) }
+  )
   JSON.generate(data: payload)
 end
 
 get "/v1/sponsors" do
-  dataset = DB[:v1_sponsors]
   if params["year"]
     year = Integer(params["year"])
-    slugs = DB[:v1_sponsorships].where(year: year).select_map(:sponsor_slug)
-    dataset = dataset.where(slug: slugs)
+    rows = DB[:v1_year_sponsors].where(year: year).order(:name).all
+    JSON.generate(data: rows.map { |r| stringify_keys(r) })
+  else
+    dataset = DB[:v1_sponsors].order(:name)
+    JSON.generate(data: dataset.all.map { |r| stringify_keys(r) })
   end
-  JSON.generate(data: dataset.order(:name).all.map { |r| stringify_keys(r) })
+end
+
+get %r{/v1/sponsors/(\d{4})/([^/]+)} do |year, slug|
+  year = Integer(year)
+  row = DB[:v1_year_sponsors].where(year: year, slug: slug).first
+  halt 404, JSON.generate(error: "not_found") unless row
+
+  years = DB[:v1_sponsorships].where(sponsor_slug: slug).select_map(:year).uniq.sort.reverse
+  payload = stringify_keys(row).merge(
+    "years" => years,
+    "other_years" => years.reject { |y| y == year },
+    "sponsorships" => DB[:v1_sponsorships].where(sponsor_slug: slug).all.map { |s| stringify_keys(s) }
+  )
+  JSON.generate(data: payload)
 end
 
 get "/v1/sponsors/:slug" do
@@ -91,6 +131,18 @@ get "/v1/sponsors/:slug" do
   sponsorships = DB[:v1_sponsorships].where(sponsor_slug: params["slug"]).all
   payload = stringify_keys(sponsor).merge("sponsorships" => sponsorships.map { |s| stringify_keys(s) })
   JSON.generate(data: payload)
+end
+
+def year_speakers(year)
+  slugs = DB[:v1_talks].where(year: year).select_map(:speaker_slug).uniq
+  speakers = DB[:v1_speakers].where(slug: slugs).order(:last_name, :first_name).all
+  speakers.map do |speaker|
+    talks = DB[:v1_talks].where(speaker_slug: speaker[:slug], year: year).all
+    stringify_keys(speaker).merge(
+      "year" => year,
+      "talks" => talks.map { |t| stringify_keys(t) }
+    )
+  end
 end
 
 def stringify_keys(row)
