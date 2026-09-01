@@ -6,9 +6,73 @@ require "sequel"
 require "net/http"
 require "uri"
 
-DB = Sequel.connect(ENV.fetch("DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5432/carolina_dev"))
-Sequel.extension :pg_array
-DB.extension :pg_array
+LISTEN_HOST = "::"
+
+module CatalogCounters
+  class << self
+    attr_accessor :connect_fn, :query_fn
+
+    def sql_count
+      @sql_count || 0
+    end
+
+    def connect_count
+      @connect_count || 0
+    end
+
+    def inc_sql
+      @sql_count = sql_count + 1
+    end
+
+    def inc_connect
+      @connect_count = connect_count + 1
+    end
+
+    def reset!
+      @sql_count = 0
+      @connect_count = 0
+    end
+  end
+end
+
+CatalogCounters.reset!
+
+def listen_host
+  LISTEN_HOST
+end
+
+def listen_bind
+  LISTEN_HOST
+end
+
+def wrap_execute!(database)
+  return database if database.nil?
+  return database if database.singleton_methods.include?(:__carolina_execute)
+
+  database.define_singleton_method(:__carolina_execute, database.method(:execute))
+  database.define_singleton_method(:execute) do |*args, &block|
+    CatalogCounters.inc_sql
+    if CatalogCounters.query_fn
+      CatalogCounters.query_fn.call(*args, &block)
+    else
+      __carolina_execute(*args, &block)
+    end
+  end
+  database
+end
+
+def open_pool
+  CatalogCounters.inc_connect
+  return CatalogCounters.connect_fn.call if CatalogCounters.connect_fn
+
+  url = ENV.fetch("DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5432/carolina_dev")
+  db = Sequel.connect(url, max_connections: 8)
+  Sequel.extension :pg_array
+  db.extension :pg_array
+  db
+end
+
+DB = wrap_execute!(open_pool)
 
 LANGUAGE = "Ruby"
 LANGUAGE_VERSION = RUBY_VERSION
@@ -29,9 +93,11 @@ ENDPOINTS = [
   { "method" => "GET", "path" => "/v1/sponsors/:year/:slug", "query" => [] }
 ].freeze
 
-set :bind, "0.0.0.0"
+set :bind, listen_bind
 set :port, Integer(ENV.fetch("PORT", "4001"))
 disable :protection
+# Empty list allows all Host headers (Fly *.fly.dev + internal checks).
+set :host_authorization, permitted_hosts: []
 
 before do
   content_type :json
@@ -62,8 +128,7 @@ end
 get "/v1/speakers" do
   if params["year"]
     year = Integer(params["year"])
-    rows = year_speakers(year)
-    JSON.generate(data: rows)
+    JSON.generate(data: year_speakers(year))
   else
     dataset = DB[:v1_speakers].order(:last_name, :first_name)
     JSON.generate(data: dataset.all.map { |r| stringify_keys(r) })
@@ -128,9 +193,55 @@ get "/v1/sponsors/:slug" do
 end
 
 def year_speakers(year)
-  slugs = DB[:v1_talks].where(year: year).select_map(:speaker_slug).uniq
-  speakers = DB[:v1_speakers].where(slug: slugs).order(:last_name, :first_name).all
-  speakers.map { |speaker| speaker_with_year(speaker, year) }
+  speakers = DB[:v1_speakers]
+    .where(slug: DB[:v1_talks].where(year: year).select(:speaker_slug))
+    .order(:last_name, :first_name)
+    .all
+  attach_year_tags(speakers, year)
+end
+
+def attach_year_tags(speakers, year)
+  return [] if speakers.empty?
+
+  slugs = speakers.map { |speaker| speaker[:slug] || speaker["slug"] }
+  talks_by = load_talks_for_year(year)
+  years_by = load_years_for_slugs(slugs)
+  speakers.map do |speaker|
+    slug = speaker[:slug] || speaker["slug"]
+    talks = Array(talks_by[slug]).map { |talk| stringify_keys(talk) }
+    years = Array(years_by[slug])
+    stringify_keys(speaker).merge(
+      "year" => year,
+      "years" => years,
+      "other_years" => years.reject { |y| y == year },
+      "talks" => talks,
+      "languages" => unique_tags(talks, "languages"),
+      "topics" => unique_tags(talks, "topics")
+    )
+  end
+end
+
+def load_talks_for_year(year)
+  DB[:v1_talks].where(year: year).order(:speaker_slug, Sequel.desc(:year)).all
+    .group_by { |talk| talk[:speaker_slug] || talk["speaker_slug"] }
+end
+
+def load_years_for_slugs(slugs)
+  return {} if slugs.empty?
+
+  rows = DB[:v1_talks]
+    .where(speaker_slug: slugs)
+    .select(:speaker_slug, :year)
+    .distinct
+    .order(:speaker_slug, Sequel.desc(:year))
+    .all
+  grouped = {}
+  rows.each do |row|
+    slug = row[:speaker_slug] || row["speaker_slug"]
+    year = row[:year] || row["year"]
+    (grouped[slug] ||= []) << year
+  end
+  grouped
 end
 
 def speaker_with_year(speaker, year)
