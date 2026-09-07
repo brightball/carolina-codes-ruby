@@ -1,0 +1,14 @@
+{
+  "name": "carolina-codes-ruby",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "install": "bundle install",
+  "ports": [
+    {
+      "name": "api",
+      "port": 4001
+    }
+  ]
+}
