@@ -11,11 +11,17 @@
 # images: clone GITHUB_SHA with the job token over HTTPS. Gitea git HTTP
 # returns 401 without the token. Do not git init or set init.defaultBranch
 # here. Do not use actions/checkout.
+# Gitea 1.24 schedules each job on its own and rejects YAML anchors, so the
+# ruby container and the restore step are repeated in every job.
 name: quality
 
 "on":
   push:
+    branches:
+      - "**"
   pull_request:
+    branches:
+      - "**"
 
 concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
@@ -29,7 +35,7 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    container: &ruby_container
+    container:
       image: docker.io/library/ruby:3.3-bookworm
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -59,10 +65,12 @@ jobs:
   tests:
     needs: prepare
     runs-on: ubuntu-latest
-    container: *ruby_container
+    container:
+      image: docker.io/library/ruby:3.3-bookworm
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - &restore_prepared_env
-        run: |
+      - run: |
           set -eu
           token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
           if [ -z "$token" ]; then echo "missing job token for restore" >&2; exit 1; fi
@@ -86,9 +94,28 @@ jobs:
   sast:
     needs: prepare
     runs-on: ubuntu-latest
-    container: *ruby_container
+    container:
+      image: docker.io/library/ruby:3.3-bookworm
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - *restore_prepared_env
+      - run: |
+          set -eu
+          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
+          if [ -z "$token" ]; then echo "missing job token for restore" >&2; exit 1; fi
+          api="${GITHUB_API_URL:-${GITHUB_SERVER_URL%/}/api/v1}"
+          helper="/tmp/prepared_env.rb"
+          if ! curl -fsSL -H "Authorization: token ${token}" \
+            "${api}/repos/${GITHUB_REPOSITORY}/raw/.gitea/ci/prepared_env.rb?ref=${GITHUB_SHA}" \
+            -o "$helper"; then
+            host="${GITHUB_SERVER_URL#https://}"
+            host="${host#http://}"
+            scheme="${GITHUB_SERVER_URL%%://*}"
+            curl -fsSL \
+              "${scheme}://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}/raw/commit/${GITHUB_SHA}/.gitea/ci/prepared_env.rb" \
+              -o "$helper"
+          fi
+          ruby "$helper" restore
       - run: |
           . ./.ci/env.sh
           semgrep scan --config p/ruby --error --metrics off --no-git-ignore --exclude vendor --exclude .git
@@ -96,9 +123,28 @@ jobs:
   audit:
     needs: prepare
     runs-on: ubuntu-latest
-    container: *ruby_container
+    container:
+      image: docker.io/library/ruby:3.3-bookworm
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - *restore_prepared_env
+      - run: |
+          set -eu
+          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
+          if [ -z "$token" ]; then echo "missing job token for restore" >&2; exit 1; fi
+          api="${GITHUB_API_URL:-${GITHUB_SERVER_URL%/}/api/v1}"
+          helper="/tmp/prepared_env.rb"
+          if ! curl -fsSL -H "Authorization: token ${token}" \
+            "${api}/repos/${GITHUB_REPOSITORY}/raw/.gitea/ci/prepared_env.rb?ref=${GITHUB_SHA}" \
+            -o "$helper"; then
+            host="${GITHUB_SERVER_URL#https://}"
+            host="${host#http://}"
+            scheme="${GITHUB_SERVER_URL%%://*}"
+            curl -fsSL \
+              "${scheme}://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}/raw/commit/${GITHUB_SHA}/.gitea/ci/prepared_env.rb" \
+              -o "$helper"
+          fi
+          ruby "$helper" restore
       - run: |
           . ./.ci/env.sh
           bundle exec bundler-audit check --update
@@ -106,9 +152,28 @@ jobs:
   gitleaks:
     needs: prepare
     runs-on: ubuntu-latest
-    container: *ruby_container
+    container:
+      image: docker.io/library/ruby:3.3-bookworm
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - *restore_prepared_env
+      - run: |
+          set -eu
+          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
+          if [ -z "$token" ]; then echo "missing job token for restore" >&2; exit 1; fi
+          api="${GITHUB_API_URL:-${GITHUB_SERVER_URL%/}/api/v1}"
+          helper="/tmp/prepared_env.rb"
+          if ! curl -fsSL -H "Authorization: token ${token}" \
+            "${api}/repos/${GITHUB_REPOSITORY}/raw/.gitea/ci/prepared_env.rb?ref=${GITHUB_SHA}" \
+            -o "$helper"; then
+            host="${GITHUB_SERVER_URL#https://}"
+            host="${host#http://}"
+            scheme="${GITHUB_SERVER_URL%%://*}"
+            curl -fsSL \
+              "${scheme}://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}/raw/commit/${GITHUB_SHA}/.gitea/ci/prepared_env.rb" \
+              -o "$helper"
+          fi
+          ruby "$helper" restore
       - run: |
           . ./.ci/env.sh
           gitleaks detect --source . --verbose
@@ -116,9 +181,28 @@ jobs:
   lint:
     needs: prepare
     runs-on: ubuntu-latest
-    container: *ruby_container
+    container:
+      image: docker.io/library/ruby:3.3-bookworm
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - *restore_prepared_env
+      - run: |
+          set -eu
+          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
+          if [ -z "$token" ]; then echo "missing job token for restore" >&2; exit 1; fi
+          api="${GITHUB_API_URL:-${GITHUB_SERVER_URL%/}/api/v1}"
+          helper="/tmp/prepared_env.rb"
+          if ! curl -fsSL -H "Authorization: token ${token}" \
+            "${api}/repos/${GITHUB_REPOSITORY}/raw/.gitea/ci/prepared_env.rb?ref=${GITHUB_SHA}" \
+            -o "$helper"; then
+            host="${GITHUB_SERVER_URL#https://}"
+            host="${host#http://}"
+            scheme="${GITHUB_SERVER_URL%%://*}"
+            curl -fsSL \
+              "${scheme}://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}/raw/commit/${GITHUB_SHA}/.gitea/ci/prepared_env.rb" \
+              -o "$helper"
+          fi
+          ruby "$helper" restore
       - run: |
           . ./.ci/env.sh
           bundle exec rubocop
