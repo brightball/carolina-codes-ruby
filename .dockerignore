@@ -1,0 +1,7 @@
+# Keep host gems and git metadata out of the build context so they cannot
+# replace the image-installed bundle.
+.git
+.bundle
+vendor
+.ci
+coverage

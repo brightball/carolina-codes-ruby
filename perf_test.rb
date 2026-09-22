@@ -3,6 +3,7 @@
 require "json"
 require "rack/mock"
 
+# rubocop:disable-next Style/MutableConstant -- counter is mutated as the file runs
 FAILED = { n: 0 }
 
 def expect(cond, msg)
@@ -22,7 +23,7 @@ def assert_years_desc(speakers, label)
 
     found_multi = true
     years.each_cons(2) do |a, b|
-      expect(a >= b, "#{label} years DESC for #{sp["slug"] || sp[:slug]}")
+      expect(a >= b, "#{label} years DESC for #{sp['slug'] || sp[:slug]}")
     end
   end
   expect(found_multi, "#{label} expected a speaker with >=2 years")
@@ -38,7 +39,8 @@ expect(src.include?("set :bind, listen_bind"), "Sinatra uses listen_bind")
 expect(puma.include?("tcp://[::]:"), "Puma config binds [::]")
 expect(!puma.include?("0.0.0.0"), "Puma config is not IPv4-only")
 expect(!dockerfile.include?("-p 8080"), "Dockerfile does not use IPv4-only puma -p")
-expect(dockerfile.include?("puma") && dockerfile.include?("config.ru"), "Dockerfile uses Puma + config.ru (puma.rb bind)")
+expect(dockerfile.include?("puma") && dockerfile.include?("config.ru"),
+       "Dockerfile uses Puma + config.ru (puma.rb bind)")
 
 reg = src.index("def register_with_elixir")
 expect(!reg.nil?, "register_with_elixir exists")
@@ -52,20 +54,21 @@ end
 require_relative "app"
 
 expect(listen_host == "::", "listen_host helper is ::")
-expect(Sinatra::Application.settings.bind == "::" || Sinatra::Application.settings.bind == "[::]", "Sinatra bind is IPv6")
+expect(["::", "[::]"].include?(Sinatra::Application.settings.bind),
+       "Sinatra bind is IPv6")
 
 boot_connects = CatalogCounters.connect_count
 CatalogCounters.instance_variable_set(:@sql_count, 0)
 health = Rack::MockRequest.new(Sinatra::Application).get("/health")
 expect(health.status == 200, "/health returns 200")
 expect(health.body.include?('"ok":true') || health.body.include?('"ok": true'), "/health body is ok JSON")
-expect(CatalogCounters.sql_count == 0, "/health does not run SQL")
+expect(CatalogCounters.sql_count.zero?, "/health does not run SQL")
 expect(CatalogCounters.connect_count == boot_connects, "/health does not open Postgres")
 
 live = !DB.nil?
 unless live
   warn "postgres unavailable, using query hook"
-  CatalogCounters.connect_fn = -> { nil }
+  CatalogCounters.connect_fn = -> {}
   CatalogCounters.query_fn = lambda { |_sql, *_|
     []
   }
@@ -85,9 +88,7 @@ data =
 speakers = data.is_a?(Array) ? data.size : 0
 warn "year list status=#{listing.status} sql=#{sql} speakers=#{speakers} connects=#{CatalogCounters.connect_count}"
 
-if live && listing.status != 200
-  expect(false, "live year listing status #{listing.status} body #{body[0, 400]}")
-end
+expect(false, "live year listing status #{listing.status} body #{body[0, 400]}") if live && listing.status != 200
 
 if listing.status == 200
   expect(speakers >= 3, "year listing returns N>=3 speakers")

@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
+PYTHONPATH="$root/.ci/pypkgs${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec python3 -m semgrep "$@"

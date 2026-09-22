@@ -2,6 +2,8 @@
 
 Read-only v1 polyglot API. See README.md for install, run, and test commands.
 
+`bundle exec rake test` drives the shipped Sinatra app with a fake catalog (no Postgres). `bundle exec rake hooks` installs pre-commit (tests, Semgrep Ruby SAST, bundler-audit, gitleaks, RuboCop). Gitea quality jobs live in `.gitea/workflows/quality.yml`: a prepare job installs the shared environment, then the five check jobs restore that tree and each run one gate.
+
 ## Cursor Cloud specific instructions
 
 This repository is one sibling git remote in the carolina.codes polyglot fleet. Cloud agents should treat **this repo** as the workspace root. The Phoenix CMS is a different remote (`github.com/brightball/carolina-codes`); do not assume `../elixir` or other sibling directories exist unless those remotes are attached to the same Cloud environment.

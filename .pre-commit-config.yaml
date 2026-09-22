@@ -1,0 +1,36 @@
+# Local pre-commit hooks. Emergency escape:
+# SKIP=tests,sast,audit,gitleaks,lint git commit
+# Install once: bundle exec rake hooks   (or: pre-commit install)
+repos:
+  - repo: local
+    hooks:
+      - id: tests
+        name: tests
+        language: system
+        entry: bundle exec rake test
+        pass_filenames: false
+        always_run: true
+      - id: sast
+        name: static security scanner
+        language: system
+        entry: bundle exec rake sast
+        pass_filenames: false
+        always_run: true
+      - id: audit
+        name: gem vulnerability scanner
+        language: system
+        entry: bundle exec rake audit
+        pass_filenames: false
+        always_run: true
+      - id: gitleaks
+        name: gitleaks
+        language: system
+        entry: gitleaks protect --staged --verbose
+        pass_filenames: false
+        always_run: true
+      - id: lint
+        name: rubocop
+        language: system
+        entry: bundle exec rake lint
+        pass_filenames: false
+        always_run: true

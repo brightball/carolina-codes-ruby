@@ -9,7 +9,7 @@ Queries PostgreSQL **v1 views** (`v1_speakers`, `v1_sponsors`, `v1_years`, `v1_t
 
 See `elixir/priv/api/openapi.yaml`.
 
-Registers with the Elixir site **once on boot**. Does not heartbeat.
+Registers with the Elixir site **once on boot**, in a background thread with a one-second timeout, and does not query the catalog to do it. A failed registration is logged and swallowed. Does not heartbeat.
 
 ```bash
 bundle install
@@ -19,3 +19,29 @@ POLYGLOT_REGISTER_TOKEN=dev \
 PUBLIC_BASE_URL=http://127.0.0.1:4001 \
 bundle exec puma
 ```
+
+## Tests and quality gates
+
+Handler tests drive the shipped Sinatra app over Rack with a fake catalog (no Postgres):
+
+```bash
+bundle exec rake test
+```
+
+Other gates (also run as git pre-commit and as parallel Gitea Actions jobs):
+
+```bash
+bundle exec rake sast      # semgrep p/ruby (Sinatra-capable SAST)
+bundle exec rake audit     # bundler-audit
+gitleaks protect --staged --verbose   # pre-commit (staged secrets)
+gitleaks detect --source . --verbose  # CI / full history
+bundle exec rake lint      # RuboCop
+```
+
+Install pre-commit hooks once:
+
+```bash
+bundle exec rake hooks     # pre-commit install + core.hooksPath=.githooks
+```
+
+Emergency skip: `SKIP=tests,sast,audit,gitleaks,lint git commit`.

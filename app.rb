@@ -5,35 +5,9 @@ require "json"
 require "sequel"
 require "net/http"
 require "uri"
+require_relative "lib/catalog_counters"
 
 LISTEN_HOST = "::"
-
-module CatalogCounters
-  class << self
-    attr_accessor :connect_fn, :query_fn
-
-    def sql_count
-      @sql_count || 0
-    end
-
-    def connect_count
-      @connect_count || 0
-    end
-
-    def inc_sql
-      @sql_count = sql_count + 1
-    end
-
-    def inc_connect
-      @connect_count = connect_count + 1
-    end
-
-    def reset!
-      @sql_count = 0
-      @connect_count = 0
-    end
-  end
-end
 
 CatalogCounters.reset!
 
@@ -194,9 +168,9 @@ end
 
 def year_speakers(year)
   speakers = DB[:v1_speakers]
-    .where(slug: DB[:v1_talks].where(year: year).select(:speaker_slug))
-    .order(:last_name, :first_name)
-    .all
+             .where(slug: DB[:v1_talks].where(year: year).select(:speaker_slug))
+             .order(:last_name, :first_name)
+             .all
   attach_year_tags(speakers, year)
 end
 
@@ -223,25 +197,26 @@ end
 
 def load_talks_for_year(year)
   DB[:v1_talks].where(year: year).order(:speaker_slug, Sequel.desc(:year)).all
-    .group_by { |talk| talk[:speaker_slug] || talk["speaker_slug"] }
+               .group_by { |talk| talk[:speaker_slug] || talk["speaker_slug"] }
 end
 
 def load_years_for_slugs(slugs)
   return {} if slugs.empty?
 
   rows = DB[:v1_talks]
-    .where(speaker_slug: slugs)
-    .select(:speaker_slug, :year)
-    .distinct
-    .order(:speaker_slug, Sequel.desc(:year))
-    .all
+         .where(speaker_slug: slugs)
+         .select(:speaker_slug, :year)
+         .distinct
+         .order(:speaker_slug, Sequel.desc(:year))
+         .all
   grouped = {}
   rows.each do |row|
     slug = row[:speaker_slug] || row["speaker_slug"]
     year = row[:year] || row["year"]
-    (grouped[slug] ||= []) << year
+    bucket = (grouped[slug] ||= [])
+    bucket << year unless bucket.include?(year)
   end
-  grouped
+  grouped.transform_values { |years| years.sort.reverse }
 end
 
 def speaker_with_year(speaker, year)
@@ -271,6 +246,7 @@ def pg_text_array(value)
   when String
     stripped = value.strip
     return [] if stripped.empty? || stripped == "{}"
+
     inner = stripped.start_with?("{") && stripped.end_with?("}") ? stripped[1..-2] : stripped
     inner.split(",").map { |part| part.gsub(/\A"|"\z/, "").strip }.reject(&:empty?)
   else
@@ -285,13 +261,21 @@ def stringify_keys(row)
   end
 end
 
-def register_with_elixir
-  url = ENV["CAROLINA_URL"]
-  token = ENV["POLYGLOT_REGISTER_TOKEN"]
-  return if url.nil? || url.empty? || token.nil? || token.empty?
+# One attempt, off the listen path. A peer that accepts and never answers
+# must not hold Puma's boot or GET /health.
+REGISTRATION_TIMEOUT = 1
+REGISTRATION_LOCK = Mutex.new
 
-  uri = URI.join(url.end_with?("/") ? url : "#{url}/", "internal/api-endpoints/register")
-  body = {
+def claim_registration
+  REGISTRATION_LOCK.synchronize do
+    claimed = @registration_started
+    @registration_started = true
+    !claimed
+  end
+end
+
+def registration_payload
+  {
     language: LANGUAGE,
     language_version: LANGUAGE_VERSION,
     api_version: API_VERSION,
@@ -301,16 +285,46 @@ def register_with_elixir
     base_url: ENV.fetch("PUBLIC_BASE_URL", "http://127.0.0.1:#{settings.port}"),
     endpoints: ENDPOINTS
   }
+end
 
+def register_with_elixir
+  url = ENV["CAROLINA_URL"].to_s
+  token = ENV["POLYGLOT_REGISTER_TOKEN"].to_s
+  return if url.empty? || token.empty?
+  return unless claim_registration
+
+  payload = JSON.generate(registration_payload)
+  thread = Thread.new do
+    Thread.current.report_on_exception = false
+    post_registration(url, token, payload)
+  end
+  thread.name = "carolina-registration"
+  thread
+end
+
+def post_registration(url, token, payload)
+  uri = URI.join(url.end_with?("/") ? url : "#{url}/", "internal/api-endpoints/register")
   http = Net::HTTP.new(uri.host, uri.port)
   http.use_ssl = uri.scheme == "https"
-  req = Net::HTTP::Post.new(uri)
-  req["Authorization"] = "Bearer #{token}"
-  req["Content-Type"] = "application/json"
-  req.body = JSON.generate(body)
-  http.request(req)
+  http.open_timeout = REGISTRATION_TIMEOUT
+  http.read_timeout = REGISTRATION_TIMEOUT
+  http.write_timeout = REGISTRATION_TIMEOUT
+  http.max_retries = 0 if http.respond_to?(:max_retries=)
+  request = Net::HTTP::Post.new(uri)
+  request["Authorization"] = "Bearer #{token}"
+  request["Content-Type"] = "application/json"
+  request.body = payload
+  http.request(request)
 rescue StandardError => e
   warn "registration failed: #{e.message}"
+ensure
+  close_registration(http)
+end
+
+def close_registration(http)
+  http.finish if http&.started?
+rescue StandardError
+  nil
 end
 
 register_with_elixir

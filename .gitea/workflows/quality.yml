@@ -1,0 +1,124 @@
+# One Gitea Actions job per quality gate. Not a single combined job.
+#
+# act_runner starts a new container per job. Host bind-mounts are blocked.
+# Prepare clones GITHUB_SHA with the job token over HTTPS, installs shared
+# OS packages + gems + Semgrep + gitleaks into the workspace, and publishes
+# that tree as a Gitea artifact via the Actions artifact HTTP API (no Node;
+# ruby:3.3-bookworm has none). The clone is full history, not a depth-1
+# snapshot, so the gitleaks job scans branch history from the restored .git.
+# Check jobs restore that tree and run one gate. They do not apt-get, bundle
+# install, pip-install Semgrep, or download the gitleaks tarball. Empty
+# images: clone GITHUB_SHA with the job token over HTTPS. Gitea git HTTP
+# returns 401 without the token. Do not git init or set init.defaultBranch
+# here. Do not use actions/checkout.
+name: quality
+
+"on":
+  push:
+  pull_request:
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+  BUNDLE_WITHOUT: ""
+  RACK_ENV: test
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    container: &ruby_container
+      image: docker.io/library/ruby:3.3-bookworm
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates build-essential libpq-dev python3-pip
+      - run: |
+          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
+          if [ -z "$token" ]; then echo "missing job token for git fetch" >&2; exit 1; fi
+          host="${GITHUB_SERVER_URL#https://}"
+          host="${host#http://}"
+          git clone --no-checkout "https://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}" .
+          git fetch origin "${GITHUB_SHA}"
+          git checkout --force FETCH_HEAD
+      - run: |
+          set -eu
+          bundle config set --local path vendor/bundle
+          bundle install --jobs 4
+          mkdir -p .ci/bin .ci/pypkgs
+          chmod +x .ci/bin/semgrep
+          pip3 install --no-cache-dir --break-system-packages --target .ci/pypkgs semgrep
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C .ci/bin gitleaks
+          chmod +x .ci/bin/gitleaks
+          .ci/bin/gitleaks version
+      - run: ruby .gitea/ci/prepared_env.rb upload
+
+  tests:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: *ruby_container
+    steps:
+      - &restore_prepared_env
+        run: |
+          set -eu
+          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
+          if [ -z "$token" ]; then echo "missing job token for restore" >&2; exit 1; fi
+          api="${GITHUB_API_URL:-${GITHUB_SERVER_URL%/}/api/v1}"
+          helper="/tmp/prepared_env.rb"
+          if ! curl -fsSL -H "Authorization: token ${token}" \
+            "${api}/repos/${GITHUB_REPOSITORY}/raw/.gitea/ci/prepared_env.rb?ref=${GITHUB_SHA}" \
+            -o "$helper"; then
+            host="${GITHUB_SERVER_URL#https://}"
+            host="${host#http://}"
+            scheme="${GITHUB_SERVER_URL%%://*}"
+            curl -fsSL \
+              "${scheme}://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}/raw/commit/${GITHUB_SHA}/.gitea/ci/prepared_env.rb" \
+              -o "$helper"
+          fi
+          ruby "$helper" restore
+      - run: |
+          . ./.ci/env.sh
+          bundle exec rake test
+
+  sast:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: *ruby_container
+    steps:
+      - *restore_prepared_env
+      - run: |
+          . ./.ci/env.sh
+          semgrep scan --config p/ruby --error --metrics off --no-git-ignore --exclude vendor --exclude .git
+
+  audit:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: *ruby_container
+    steps:
+      - *restore_prepared_env
+      - run: |
+          . ./.ci/env.sh
+          bundle exec bundler-audit check --update
+
+  gitleaks:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: *ruby_container
+    steps:
+      - *restore_prepared_env
+      - run: |
+          . ./.ci/env.sh
+          gitleaks detect --source . --verbose
+
+  lint:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: *ruby_container
+    steps:
+      - *restore_prepared_env
+      - run: |
+          . ./.ci/env.sh
+          bundle exec rubocop
