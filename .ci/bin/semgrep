@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
-PYTHONPATH="$root/.ci/pypkgs${PYTHONPATH:+:$PYTHONPATH}"
-export PYTHONPATH
-exec python3 -m semgrep "$@"
+# Current Semgrep is an OCaml launcher that execs `pysemgrep` from PATH.
+# `python -m semgrep` exits non-zero, so point PATH at the pip --target bin.
+export PYTHONPATH="$root/.ci/pypkgs${PYTHONPATH:+:$PYTHONPATH}"
+export PATH="$root/.ci/pypkgs/bin:${PATH}"
+exec "$root/.ci/pypkgs/bin/semgrep" "$@"
