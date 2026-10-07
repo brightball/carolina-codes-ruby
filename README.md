@@ -2,12 +2,26 @@
 
 Read-only Sinatra API for the [Carolina Code Conference](https://carolina.codes) polyglot site.
 
+## Runtime
+
+Versions below are the pins in `mise.toml` and `Gemfile.lock`. The Gemfile floor is `ruby >= 3.2`.
+
+| Piece | Version |
+| --- | --- |
+| Ruby | 3.3.10 (`Gemfile.lock` records `ruby 3.3.10p183`; `mise.toml` pins `3.3.10`) |
+| Sinatra | 4.2.1 |
+| Puma | 7.2.1 |
+| Sequel | 5.107.0 |
+| pg | 1.6.3 |
+
+Quality tooling of note: RuboCop 1.91.0, bundler-audit 0.9.3, gitleaks 8.30.1 (`mise.toml`), Minitest 5.27.0, and Rake 13.4.2. Direct runtime gems also include `json`. The container is `ruby:3.3-alpine`. Agent instructions and decision history: `AGENTS.md`, `MEMORY.md`, `DECISIONS.md`.
+
 Queries PostgreSQL **v1 views** (`v1_speakers`, `v1_sponsors`, `v1_years`, `v1_talks`, `v1_sponsorships`, `v1_year_speakers`, `v1_year_sponsors`). Year-scoped detail:
 
 - `GET /v1/speakers/2026/diana-pham`
 - `GET /v1/sponsors/2026/flywheel`
 
-See `elixir/priv/api/openapi.yaml`.
+The HTTP contract is the CMS file `priv/api/openapi.yaml` in `github.com/brightball/carolina-codes`. This repo does not ship a copy.
 
 Registers with the Elixir site **once on boot**, in a background thread with a one-second timeout, and does not query the catalog to do it. A failed registration is logged and swallowed. Does not heartbeat.
 
