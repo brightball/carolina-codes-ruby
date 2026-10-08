@@ -91,7 +91,7 @@ Adding a route means editing `ENDPOINTS` and the Sinatra route together. Clients
 
 ## D006. Listen on IPv6 and keep one Fly machine warm
 
-- Status: accepted
+- Status: superseded by D011
 - Date: 2026-09-01
 
 ### Context
@@ -173,3 +173,20 @@ Use a build stage (`ruby:3.3-alpine` with `build-base` and `postgresql-dev`) and
 ### Consequences
 
 Gem changes require a rebuild. The runtime image has no compiler and does not run `bundle install`. CI uses `ruby:3.3-bookworm` and installs the development group because it runs the gates.
+
+## D011. Let the Fly app scale to zero
+
+- Status: accepted
+- Date: 2026-10-08
+
+### Context
+
+Polyglot APIs should stop when they have no traffic. The main Carolina Codes app keeps the active language API warm, so this process does not need a resident machine. D006 set `auto_stop_machines = "off"` and `min_machines_running = 1` so a health check could not race boot. Registration no longer blocks `GET /health` (D004), and `auto_start_machines` can start a stopped machine when the CMS calls it.
+
+### Decision
+
+`fly.toml` sets `min_machines_running = 0` and `auto_stop_machines = "stop"`. `auto_start_machines` stays `true`. The app name stays `carolina-codes-ruby`. Internal port `8080`, the `GET /health` check, and the VM size (`256mb`, shared, 1 CPU) stay. The IPv6 listen address from D006 stays. Deploy this app alone. Do not run a fleet-wide `./bin/fly-update`.
+
+### Consequences
+
+An idle machine stops. The CMS starts it again when this API is the one it is keeping warm. This supersedes the scale settings in D006. The IPv6 bind and the health-check path recorded there still stand.

@@ -21,6 +21,7 @@ The pin files win if this paragraph drifts.
 - `Gemfile.lock`: Ruby `3.3.10p183`, Sinatra `4.2.1`, Puma `7.2.1`, Sequel `5.107.0`, pg `1.6.3`, RuboCop `1.91.0`, bundler-audit `0.9.3`, Minitest `5.27.0`, Rake `13.4.2`.
 - Image: `ruby:3.3-alpine` for build and runtime. Gitea jobs use `ruby:3.3-bookworm`.
 - Default listen port is `4001`. The container and `fly.toml` use `8080`.
+- `fly.toml` scales to zero: `min_machines_running = 0`, `auto_stop_machines = "stop"`, `auto_start_machines = true`. Idle machines stop. The CMS keepalive starts this app when it is the warm language API. Do not pin a resident machine in this file.
 
 ## Commands
 

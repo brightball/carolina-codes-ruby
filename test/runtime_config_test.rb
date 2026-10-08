@@ -35,17 +35,21 @@ class RuntimeConfigTest < Minitest::Test
     assert_match(%r{(^|\n)vendor/?(?:\n|\z)}, ignore)
   end
 
-  def test_fly_health_check_does_not_scale_to_zero_and_puma_binds_ipv6
+  def test_fly_stops_when_idle_and_puma_binds_ipv6
     fly = File.read(File.join(ROOT, "fly.toml"))
     puma = File.read(File.join(ROOT, "config/puma.rb"))
     app = File.read(File.join(ROOT, "app.rb"))
 
+    assert_match(/app\s*=\s*"carolina-codes-ruby"/, fly)
     assert_match(/internal_port\s*=\s*8080/, fly)
     assert_match(%r{path\s*=\s*"/health"}, fly)
-    assert_match(/min_machines_running\s*=\s*[1-9]/, fly)
-    scale_to_zero = fly.match(/auto_stop_machines\s*=\s*"stop"/) &&
-                    fly.match(/min_machines_running\s*=\s*0/)
-    refute scale_to_zero
+    assert_match(/memory\s*=\s*"256mb"/, fly)
+    assert_match(/cpu_kind\s*=\s*"shared"/, fly)
+    assert_match(/cpus\s*=\s*1/, fly)
+    assert_match(/min_machines_running\s*=\s*0\b/, fly)
+    assert_match(/auto_stop_machines\s*=\s*"(?:stop|suspend)"/, fly)
+    assert_match(/auto_start_machines\s*=\s*true/, fly)
+    refute_match(/auto_stop_machines\s*=\s*"off"/, fly)
 
     assert_match(%r{bind "tcp://\[::\]:}, puma)
     refute_match(/0\.0\.0\.0/, puma)
